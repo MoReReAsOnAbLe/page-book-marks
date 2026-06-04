@@ -188,11 +188,11 @@
   .modal p.hint { margin: 0 0 18px; font-size: 13px; color: var(--text-faint); }
   .field { margin-bottom: 14px; }
   .field label { display: block; font-size: 12.5px; font-weight: 600; color: var(--text-soft); margin-bottom: 6px; }
-  .field input {
+  .field input, .field select {
     width: 100%; padding: 11px 12px; border-radius: 11px; border: 1px solid var(--border);
     background: var(--bg); color: var(--text); font-size: 14px; outline: none;
   }
-  .field input:focus { border-color: var(--accent); }
+  .field input:focus, .field select:focus { border-color: var(--accent); }
   .modal-actions { display: flex; gap: 10px; justify-content: flex-end; margin-top: 20px; }
 
   .menu { position: relative; }
@@ -214,6 +214,43 @@
     transition: opacity .2s, transform .2s; pointer-events: none; z-index: 80;
   }
   .toast.show { opacity: 1; transform: translateX(-50%) translateY(0); }
+
+  /* folders */
+  .folders { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; margin-bottom: 22px; }
+  .pill {
+    display: inline-flex; align-items: center; gap: 7px; cursor: pointer;
+    border: 1px solid var(--border); background: var(--card); color: var(--text-soft);
+    padding: 7px 13px; border-radius: 20px; font-size: 13.5px; font-weight: 600;
+    box-shadow: var(--shadow); transition: border-color .15s, background .15s, color .15s, transform .08s;
+    white-space: nowrap;
+  }
+  .pill:hover { border-color: var(--border-strong); }
+  .pill:active { transform: translateY(1px); }
+  .pill.active { background: var(--accent); border-color: var(--accent); color: #fff; }
+  .pill .pill-count {
+    font-size: 11px; font-weight: 700; padding: 1px 7px; border-radius: 12px;
+    background: var(--accent-soft); color: var(--accent);
+  }
+  .pill.active .pill-count { background: rgba(255,255,255,.22); color: #fff; }
+  .pill.drop { border-color: var(--accent); background: var(--accent-soft); color: var(--accent); box-shadow: 0 0 0 3px var(--accent-soft); }
+  .pill.add-folder { border-style: dashed; color: var(--text-faint); }
+  .pill.add-folder:hover { color: var(--accent); border-color: var(--accent); }
+  .pill .pill-act {
+    border: none; background: transparent; color: inherit; cursor: pointer;
+    padding: 0; margin-left: 2px; line-height: 0; opacity: .8; border-radius: 5px;
+  }
+  .pill .pill-act:hover { opacity: 1; }
+
+  /* drag handle + dragging */
+  .grip {
+    flex: none; width: 38px; display: flex; align-items: center; justify-content: center;
+    cursor: grab; color: var(--text-faint); border-right: 1px solid var(--border);
+    transition: background .12s, color .12s;
+  }
+  .grip:hover { color: var(--accent); background: var(--accent-soft); }
+  .grip:active { cursor: grabbing; }
+  .card.dragging { opacity: .45; outline: 2px dashed var(--accent); outline-offset: -2px; }
+  .card.dragging .subpanel { max-height: 0 !important; }
 </style>
 </head>
 <body>
@@ -246,6 +283,7 @@
       </button>
     </header>
 
+    <div id="folders" class="folders"></div>
     <div id="grid" class="grid"></div>
     <input type="file" id="importFile" accept="application/json" hidden />
   </div>
@@ -263,6 +301,10 @@
         <label for="bmUrl">Website URL</label>
         <input id="bmUrl" type="text" placeholder="e.g. anthropic.com" />
       </div>
+      <div class="field">
+        <label for="bmFolder">Folder</label>
+        <select id="bmFolder"></select>
+      </div>
       <div class="modal-actions">
         <button class="btn" id="bmCancel">Cancel</button>
         <button class="btn primary" id="bmSave">Save</button>
@@ -275,32 +317,61 @@
 <script>
 (function () {
   "use strict";
-  const KEY = "pbm.bookmarks.v1";
+  const KEY = "pbm.data.v2";
+  const KEY_V1 = "pbm.bookmarks.v1";
   const THEME_KEY = "pbm.theme";
+  const ALL = "all";
 
   // ---------- state ----------
-  let bookmarks = load();
+  let folders = [];
+  let bookmarks = [];
+  let activeFolder = ALL;
   let editingId = null;
   let query = "";
+  let draggingId = null;
 
-  function load() {
+  (function loadState() {
+    // v2 native format
     try {
       const raw = localStorage.getItem(KEY);
-      if (raw) return JSON.parse(raw);
+      if (raw) {
+        const d = JSON.parse(raw);
+        folders = Array.isArray(d.folders) ? d.folders : [];
+        bookmarks = Array.isArray(d.bookmarks) ? d.bookmarks : [];
+        return;
+      }
     } catch (e) {}
-    return seed();
-  }
+    // migrate v1 (a bare array of bookmarks) -> v2
+    try {
+      const raw1 = localStorage.getItem(KEY_V1);
+      if (raw1) {
+        const arr = JSON.parse(raw1);
+        if (Array.isArray(arr)) {
+          folders = [];
+          bookmarks = arr.map(b => Object.assign({ folderId: null }, b));
+          save();
+          return;
+        }
+      }
+    } catch (e) {}
+    // fresh install
+    folders = [];
+    bookmarks = seed();
+    save();
+  })();
+
   function save() {
-    try { localStorage.setItem(KEY, JSON.stringify(bookmarks)); } catch (e) {}
+    try { localStorage.setItem(KEY, JSON.stringify({ folders, bookmarks })); } catch (e) {}
   }
   function seed() {
     return [
-      { id: uid(), title: "Anthropic", url: "https://www.anthropic.com", visits: 0, subpages: [] },
-      { id: uid(), title: "GitHub", url: "https://github.com", visits: 0, subpages: [] },
-      { id: uid(), title: "YouTube", url: "https://youtube.com", visits: 0, subpages: [] },
+      { id: uid(), title: "Anthropic", url: "https://www.anthropic.com", visits: 0, subpages: [], folderId: null },
+      { id: uid(), title: "GitHub", url: "https://github.com", visits: 0, subpages: [], folderId: null },
+      { id: uid(), title: "YouTube", url: "https://youtube.com", visits: 0, subpages: [], folderId: null },
     ];
   }
   function uid() { return Date.now().toString(36) + Math.random().toString(36).slice(2, 7); }
+  function folderName(id) { const f = folders.find(x => x.id === id); return f ? f.name : null; }
 
   // ---------- url helpers ----------
   function normalizeUrl(u) {
@@ -326,29 +397,108 @@
 
   // ---------- rendering ----------
   const grid = document.getElementById("grid");
+  const foldersEl = document.getElementById("folders");
+
+  function inFolder(b) { return activeFolder === ALL || b.folderId === activeFolder; }
+
+  function renderFolders() {
+    foldersEl.innerHTML = "";
+
+    const pill = (label, count, id, active) => {
+      const el = document.createElement("button");
+      el.className = "pill" + (active ? " active" : "");
+      el.innerHTML = '<span class="pill-label"></span>';
+      el.querySelector(".pill-label").textContent = label;
+      const c = document.createElement("span");
+      c.className = "pill-count";
+      c.textContent = count;
+      el.appendChild(c);
+      el.onclick = () => { activeFolder = id; renderFolders(); render(); };
+      // drop target: move dragged bookmark into this folder
+      el.addEventListener("dragover", e => { if (draggingId) { e.preventDefault(); el.classList.add("drop"); } });
+      el.addEventListener("dragleave", () => el.classList.remove("drop"));
+      el.addEventListener("drop", e => {
+        e.preventDefault(); el.classList.remove("drop");
+        const b = bookmarks.find(x => x.id === draggingId);
+        if (b) { b.folderId = (id === ALL ? null : id); save(); toast(id === ALL ? "Moved out of folder" : "Moved to " + label); }
+        render();
+      });
+      return el;
+    };
+
+    foldersEl.appendChild(pill("All", bookmarks.length, ALL, activeFolder === ALL));
+
+    folders.forEach(f => {
+      const count = bookmarks.filter(b => b.folderId === f.id).length;
+      const p = pill(f.name, count, f.id, activeFolder === f.id);
+      if (activeFolder === f.id) {
+        const ren = document.createElement("button");
+        ren.className = "pill-act"; ren.title = "Rename folder";
+        ren.innerHTML = '<svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 20h9"/><path d="M16.5 3.5a2.1 2.1 0 0 1 3 3L7 19l-4 1 1-4Z"/></svg>';
+        ren.onclick = (e) => { e.stopPropagation(); renameFolder(f.id); };
+        const del = document.createElement("button");
+        del.className = "pill-act"; del.title = "Delete folder";
+        del.innerHTML = '<svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round"><path d="M18 6 6 18M6 6l12 12"/></svg>';
+        del.onclick = (e) => { e.stopPropagation(); deleteFolder(f.id); };
+        p.appendChild(ren); p.appendChild(del);
+      }
+      foldersEl.appendChild(p);
+    });
+
+    const add = document.createElement("button");
+    add.className = "pill add-folder";
+    add.innerHTML = '<svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round"><path d="M12 5v14M5 12h14"/></svg> New folder';
+    add.onclick = addFolder;
+    foldersEl.appendChild(add);
+  }
 
   function render() {
+    renderFolders();
     grid.innerHTML = "";
     const q = query.toLowerCase();
-    const list = bookmarks.filter(b =>
-      !q || b.title.toLowerCase().includes(q) || hostOf(b.url).includes(q));
+    const list = bookmarks.filter(b => inFolder(b) &&
+      (!q || (b.title || "").toLowerCase().includes(q) || hostOf(b.url).includes(q)));
 
-    if (bookmarks.length === 0) {
-      grid.innerHTML = '<div class="empty-state" style="grid-column:1/-1"><div class="big">No bookmarks yet</div>Click “Add bookmark” to create your first one.</div>';
-      return;
-    }
     if (list.length === 0) {
-      grid.innerHTML = '<div class="empty-state" style="grid-column:1/-1"><div class="big">No matches</div>Nothing matches “' + escapeHtml(query) + '”.</div>';
-      return;
+      const msg = query
+        ? '<div class="big">No matches</div>Nothing matches “' + escapeHtml(query) + '”.'
+        : (activeFolder === ALL
+            ? '<div class="big">No bookmarks yet</div>Click “Add bookmark” to create your first one.'
+            : '<div class="big">This folder is empty</div>Drag a bookmark onto it, or add one here.');
+      grid.innerHTML = '<div class="empty-state" style="grid-column:1/-1">' + msg + '</div>';
+    } else {
+      list.forEach(b => grid.appendChild(cardEl(b)));
     }
-
-    list.forEach(b => grid.appendChild(cardEl(b)));
 
     const add = document.createElement("div");
     add.className = "add-tile";
     add.innerHTML = '<div class="plus"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round"><path d="M12 5v14M5 12h14"/></svg></div>Add bookmark';
     add.onclick = () => openBookmarkModal(null);
     grid.appendChild(add);
+  }
+
+  // ---------- drag to reorder ----------
+  grid.addEventListener("dragover", e => {
+    if (!draggingId) return;
+    const dragging = grid.querySelector(".card.dragging");
+    if (!dragging) return;
+    e.preventDefault();
+    const target = e.target.closest(".card");
+    if (!target || target === dragging || !target.dataset.id) return;
+    const rect = target.getBoundingClientRect();
+    const after = e.clientY > rect.bottom ? true
+                : e.clientY < rect.top ? false
+                : e.clientX > rect.left + rect.width / 2;
+    if (after) target.after(dragging); else target.before(dragging);
+  });
+
+  function commitOrderFromDOM() {
+    const ids = [...grid.querySelectorAll(".card[data-id]")].map(c => c.dataset.id);
+    if (!ids.length) return;
+    const idSet = new Set(ids);
+    const ordered = ids.map(id => bookmarks.find(b => b.id === id)).filter(Boolean);
+    let k = 0;
+    bookmarks = bookmarks.map(b => idSet.has(b.id) ? ordered[k++] : b);
   }
 
   function cardEl(b) {
@@ -390,6 +540,31 @@
     // action bar
     const actions = document.createElement("div");
     actions.className = "card-actions";
+
+    const grip = document.createElement("div");
+    grip.className = "grip";
+    grip.draggable = true;
+    grip.title = "Drag to reorder";
+    grip.innerHTML = '<svg width="15" height="15" viewBox="0 0 24 24" fill="currentColor"><circle cx="9" cy="6" r="1.6"/><circle cx="15" cy="6" r="1.6"/><circle cx="9" cy="12" r="1.6"/><circle cx="15" cy="12" r="1.6"/><circle cx="9" cy="18" r="1.6"/><circle cx="15" cy="18" r="1.6"/></svg>';
+    grip.addEventListener("dragstart", (e) => {
+      draggingId = b.id;
+      card.classList.add("dragging");
+      card.classList.remove("open");
+      e.dataTransfer.effectAllowed = "move";
+      try { e.dataTransfer.setData("text/plain", b.id); } catch (err) {}
+    });
+    grip.addEventListener("dragend", () => {
+      const moved = draggingId;
+      draggingId = null;
+      card.classList.remove("dragging");
+      foldersEl.querySelectorAll(".pill.drop").forEach(p => p.classList.remove("drop"));
+      // if the card is still in the grid (reordered, not moved to another folder), persist order
+      if (moved && grid.querySelector('.card[data-id="' + moved + '"]')) {
+        commitOrderFromDOM();
+        save();
+      }
+    });
+    actions.appendChild(grip);
 
     const subCount = (b.subpages || []).length;
     const chev = document.createElement("button");
@@ -517,6 +692,17 @@
   const bmName = document.getElementById("bmName");
   const bmUrl = document.getElementById("bmUrl");
   const bmTitle = document.getElementById("bmTitle");
+  const bmFolder = document.getElementById("bmFolder");
+
+  function populateFolderSelect(selected) {
+    bmFolder.innerHTML = '<option value="">No folder</option>';
+    folders.forEach(f => {
+      const o = document.createElement("option");
+      o.value = f.id; o.textContent = f.name;
+      if (f.id === selected) o.selected = true;
+      bmFolder.appendChild(o);
+    });
+  }
 
   function openBookmarkModal(id) {
     editingId = id;
@@ -524,6 +710,8 @@
     bmTitle.textContent = b ? "Edit bookmark" : "Add bookmark";
     bmName.value = b ? b.title : "";
     bmUrl.value = b ? b.url : "";
+    const preset = b ? (b.folderId || "") : (activeFolder === ALL ? "" : activeFolder);
+    populateFolderSelect(preset);
     bmOverlay.classList.add("show");
     setTimeout(() => bmName.focus(), 30);
   }
@@ -533,15 +721,45 @@
     const t = bmName.value.trim();
     const u = bmUrl.value.trim();
     if (!u) { bmUrl.focus(); return; }
+    const folderId = bmFolder.value || null;
     if (editingId) {
       const b = bookmarks.find(x => x.id === editingId);
-      if (b) { b.title = t || hostOf(u); b.url = normalizeUrl(u); }
+      if (b) { b.title = t || hostOf(u); b.url = normalizeUrl(u); b.folderId = folderId; }
       toast("Bookmark updated");
     } else {
-      bookmarks.push({ id: uid(), title: t || hostOf(u), url: normalizeUrl(u), visits: 0, subpages: [] });
+      bookmarks.push({ id: uid(), title: t || hostOf(u), url: normalizeUrl(u), visits: 0, subpages: [], folderId: folderId });
       toast("Bookmark added");
     }
     save(); render(); closeBookmarkModal();
+  }
+
+  // ---------- folder CRUD ----------
+  function addFolder() {
+    const name = (prompt("New folder name:") || "").trim();
+    if (!name) return;
+    const f = { id: uid(), name };
+    folders.push(f);
+    activeFolder = f.id;
+    save(); render();
+  }
+  function renameFolder(id) {
+    const f = folders.find(x => x.id === id);
+    if (!f) return;
+    const name = (prompt("Rename folder:", f.name) || "").trim();
+    if (!name) return;
+    f.name = name; save(); render();
+  }
+  function deleteFolder(id) {
+    const f = folders.find(x => x.id === id);
+    if (!f) return;
+    const n = bookmarks.filter(b => b.folderId === id).length;
+    const msg = n ? 'Delete folder “' + f.name + '”? Its ' + n + ' bookmark' + (n === 1 ? "" : "s") + ' will move to “No folder” (they are not deleted).'
+                  : 'Delete folder “' + f.name + '”?';
+    if (!confirm(msg)) return;
+    bookmarks.forEach(b => { if (b.folderId === id) b.folderId = null; });
+    folders = folders.filter(x => x.id !== id);
+    if (activeFolder === id) activeFolder = ALL;
+    save(); render(); toast("Folder deleted");
   }
 
   document.getElementById("bmSave").onclick = saveBookmark;
@@ -580,7 +798,7 @@
 
   // ---------- export / import ----------
   document.getElementById("exportBtn").onclick = () => {
-    const blob = new Blob([JSON.stringify(bookmarks, null, 2)], { type: "application/json" });
+    const blob = new Blob([JSON.stringify({ folders, bookmarks }, null, 2)], { type: "application/json" });
     const a = document.createElement("a");
     a.href = URL.createObjectURL(blob);
     a.download = "bookmarks-backup.json";
@@ -597,17 +815,24 @@
     reader.onload = () => {
       try {
         const data = JSON.parse(reader.result);
-        if (!Array.isArray(data)) throw new Error("bad");
+        // accept v2 object { folders, bookmarks } or a bare v1 array
+        const arr = Array.isArray(data) ? data : (Array.isArray(data.bookmarks) ? data.bookmarks : null);
+        if (!arr) throw new Error("bad");
+        const importedFolders = (!Array.isArray(data) && Array.isArray(data.folders)) ? data.folders : [];
+        folders = importedFolders.map(f => ({ id: f.id || uid(), name: String(f.name || "Folder") }));
+        const folderIds = new Set(folders.map(f => f.id));
         // light validation / normalization
-        bookmarks = data.map(b => ({
+        bookmarks = arr.map(b => ({
           id: b.id || uid(),
           title: String(b.title || ""),
           url: normalizeUrl(b.url || ""),
           visits: Number(b.visits) || 0,
+          folderId: folderIds.has(b.folderId) ? b.folderId : null,
           subpages: Array.isArray(b.subpages) ? b.subpages.map(s => ({
             id: s.id || uid(), title: String(s.title || ""), url: normalizeUrl(s.url || ""), visits: Number(s.visits) || 0
           })) : []
         })).filter(b => b.url);
+        activeFolder = ALL;
         save(); render(); toast("Backup imported");
       } catch (e) { toast("Couldn’t read that file"); }
       importFile.value = "";
