@@ -116,7 +116,9 @@
     display: grid; place-items: center; font-weight: 700; font-size: 18px; color: #fff;
     overflow: hidden; box-shadow: inset 0 0 0 1px rgba(0,0,0,.04);
   }
-  .favicon img { width: 100%; height: 100%; object-fit: cover; }
+  .favicon img { width: 100%; height: 100%; object-fit: contain; }
+  .favicon.has-img { background: #fff !important; box-shadow: inset 0 0 0 1px rgba(0,0,0,.08); }
+  .favicon.has-img img { padding: 7px; }
   .card-info { min-width: 0; flex: 1; }
   .card-title { font-weight: 650; font-size: 15px; letter-spacing: -.1px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
   .card-host { font-size: 12.5px; color: var(--text-faint); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; margin-top: 2px; }
@@ -384,9 +386,13 @@
     try { return new URL(normalizeUrl(u)).hostname.replace(/^www\./, ""); }
     catch (e) { return u; }
   }
-  function faviconUrl(u) {
+  function faviconSources(u) {
     const h = hostOf(u);
-    return "https://www.google.com/s2/favicons?domain=" + encodeURIComponent(h) + "&sz=64";
+    return [
+      "https://www.google.com/s2/favicons?sz=128&domain=" + encodeURIComponent(h),
+      "https://icons.duckduckgo.com/ip3/" + encodeURIComponent(h) + ".ico",
+      "https://" + h + "/favicon.ico"
+    ];
   }
   const COLORS = ["#5b6cff","#ff6b6b","#23a6d5","#22b07d","#f4a52b","#9b6bff","#e0518a","#0fb5ba","#7a8aff","#ff8a3d"];
   function colorFor(str) {
@@ -522,9 +528,19 @@
     const img = document.createElement("img");
     img.alt = "";
     img.referrerPolicy = "no-referrer";
-    img.onload = () => { fav.textContent = ""; };
-    img.onerror = () => { img.remove(); };
-    img.src = faviconUrl(b.url);
+    const sources = faviconSources(b.url);
+    let si = 0;
+    img.onload = () => {
+      // some providers return a blank/zero-size image on "success" — treat that as a miss
+      if (img.naturalWidth > 0) { fav.textContent = ""; fav.classList.add("has-img"); }
+      else img.onerror();
+    };
+    img.onerror = () => {
+      si += 1;
+      if (si < sources.length) img.src = sources[si];
+      else { img.remove(); fav.classList.remove("has-img"); } // keep the letter tile
+    };
+    img.src = sources[0];
     fav.appendChild(img);
 
     const info = document.createElement("div");
