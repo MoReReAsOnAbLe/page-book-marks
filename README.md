@@ -9,7 +9,8 @@ A clean, single-file bookmark dashboard you can set as your browser's home page 
 - **Folders / groups** — organize bookmarks into folders. A pill row at the top filters by folder (`All` shows everything). Create, rename, and delete folders inline. Deleting a folder keeps its bookmarks (they move to "No folder").
 - **Drag to reorder** — grab the grip handle (⠿) on a card to reorder bookmarks. Drag a card onto a folder pill to move it into that folder, or onto `All` to ungroup it.
 - **Easy add / edit / delete** — for both bookmarks and their pages; assign a folder right from the add/edit dialog.
-- **Auto favicons** — each site's icon is fetched automatically, with a colored letter tile as fallback.
+- **Auto favicons** — each site's icon is fetched automatically (it tries the site's own `/favicon.ico` first, then icon services), with a colored letter tile as a clean fallback if none load.
+- **Custom icons** — upload your own logo image per bookmark from the add/edit dialog. It's downscaled and stored locally, so it works fully offline and never depends on a network request.
 - **Search** — filter bookmarks instantly (press `/` to focus).
 - **Light / dark theme** — follows your system, toggle in the ⋯ menu.
 - **Backup** — export/import all your data as JSON from the ⋯ menu.

@@ -195,6 +195,14 @@
     background: var(--bg); color: var(--text); font-size: 14px; outline: none;
   }
   .field input:focus, .field select:focus { border-color: var(--accent); }
+  .icon-row { display: flex; align-items: center; gap: 10px; }
+  .icon-row .btn { padding: 8px 12px; font-size: 13px; }
+  .icon-preview {
+    width: 44px; height: 44px; flex: none; border-radius: 11px; border: 1px solid var(--border);
+    background: var(--bg) center/contain no-repeat; display: grid; place-items: center;
+    color: var(--text-faint); font-size: 11px; overflow: hidden;
+  }
+  .icon-preview img { width: 100%; height: 100%; object-fit: contain; padding: 7px; }
   .modal-actions { display: flex; gap: 10px; justify-content: flex-end; margin-top: 20px; }
 
   .menu { position: relative; }
@@ -307,6 +315,15 @@
         <label for="bmFolder">Folder</label>
         <select id="bmFolder"></select>
       </div>
+      <div class="field">
+        <label>Icon</label>
+        <div class="icon-row">
+          <div class="icon-preview" id="bmIconPreview"></div>
+          <button type="button" class="btn" id="bmIconUpload">Upload image…</button>
+          <button type="button" class="btn" id="bmIconClear">Use site favicon</button>
+        </div>
+        <input type="file" id="bmIconFile" accept="image/*" hidden />
+      </div>
       <div class="modal-actions">
         <button class="btn" id="bmCancel">Cancel</button>
         <button class="btn primary" id="bmSave">Save</button>
@@ -389,9 +406,9 @@
   function faviconSources(u) {
     const h = hostOf(u);
     return [
-      "https://www.google.com/s2/favicons?sz=128&domain=" + encodeURIComponent(h),
+      "https://" + h + "/favicon.ico",
       "https://icons.duckduckgo.com/ip3/" + encodeURIComponent(h) + ".ico",
-      "https://" + h + "/favicon.ico"
+      "https://www.google.com/s2/favicons?sz=128&domain=" + encodeURIComponent(h)
     ];
   }
   const COLORS = ["#5b6cff","#ff6b6b","#23a6d5","#22b07d","#f4a52b","#9b6bff","#e0518a","#0fb5ba","#7a8aff","#ff8a3d"];
@@ -528,12 +545,15 @@
     const img = document.createElement("img");
     img.alt = "";
     img.referrerPolicy = "no-referrer";
-    const sources = faviconSources(b.url);
+    // a custom uploaded/linked icon wins; otherwise fall back through favicon providers
+    const sources = b.icon ? [b.icon] : faviconSources(b.url);
     let si = 0;
     img.onload = () => {
-      // some providers return a blank/zero-size image on "success" — treat that as a miss
-      if (img.naturalWidth > 0) { fav.textContent = ""; fav.classList.add("has-img"); }
-      else img.onerror();
+      // reject blank / placeholder responses (e.g. a 1×1 transparent pixel) so we don't
+      // end up with an empty white chip — keep falling back, then the colored letter tile
+      if (img.naturalWidth >= 16 || (b.icon && img.naturalWidth > 0)) {
+        fav.textContent = ""; fav.classList.add("has-img");
+      } else img.onerror();
     };
     img.onerror = () => {
       si += 1;
@@ -709,6 +729,9 @@
   const bmUrl = document.getElementById("bmUrl");
   const bmTitle = document.getElementById("bmTitle");
   const bmFolder = document.getElementById("bmFolder");
+  const bmIconPreview = document.getElementById("bmIconPreview");
+  const bmIconFile = document.getElementById("bmIconFile");
+  let pendingIcon = null; // data URL for a custom icon, or null to use the site favicon
 
   function populateFolderSelect(selected) {
     bmFolder.innerHTML = '<option value="">No folder</option>';
@@ -720,12 +743,55 @@
     });
   }
 
+  function renderIconPreview() {
+    bmIconPreview.innerHTML = "";
+    if (pendingIcon) {
+      const im = document.createElement("img");
+      im.alt = ""; im.src = pendingIcon;
+      bmIconPreview.appendChild(im);
+    } else {
+      bmIconPreview.textContent = "Auto";
+    }
+  }
+
+  // shrink an uploaded image to a small square data URL so localStorage stays light
+  function fileToIcon(file, cb) {
+    const reader = new FileReader();
+    reader.onload = () => {
+      const im = new Image();
+      im.onload = () => {
+        const max = 64;
+        const scale = Math.min(1, max / Math.max(im.width || max, im.height || max));
+        const w = Math.max(1, Math.round((im.width || max) * scale));
+        const h = Math.max(1, Math.round((im.height || max) * scale));
+        const c = document.createElement("canvas");
+        c.width = w; c.height = h;
+        try { c.getContext("2d").drawImage(im, 0, 0, w, h); cb(c.toDataURL("image/png")); }
+        catch (e) { cb(reader.result); }
+      };
+      im.onerror = () => cb(reader.result);
+      im.src = reader.result;
+    };
+    reader.readAsDataURL(file);
+  }
+
+  document.getElementById("bmIconUpload").onclick = () => bmIconFile.click();
+  document.getElementById("bmIconClear").onclick = () => { pendingIcon = null; renderIconPreview(); };
+  bmIconFile.onchange = () => {
+    const f = bmIconFile.files[0];
+    if (!f) return;
+    fileToIcon(f, (dataUrl) => { pendingIcon = dataUrl; renderIconPreview(); });
+    bmIconFile.value = "";
+  };
+
   function openBookmarkModal(id) {
     editingId = id;
     const b = id ? bookmarks.find(x => x.id === id) : null;
     bmTitle.textContent = b ? "Edit bookmark" : "Add bookmark";
     bmName.value = b ? b.title : "";
     bmUrl.value = b ? b.url : "";
+    pendingIcon = b ? (b.icon || null) : null;
+    renderIconPreview();
     const preset = b ? (b.folderId || "") : (activeFolder === ALL ? "" : activeFolder);
     populateFolderSelect(preset);
     bmOverlay.classList.add("show");
@@ -740,10 +806,10 @@
     const folderId = bmFolder.value || null;
     if (editingId) {
       const b = bookmarks.find(x => x.id === editingId);
-      if (b) { b.title = t || hostOf(u); b.url = normalizeUrl(u); b.folderId = folderId; }
+      if (b) { b.title = t || hostOf(u); b.url = normalizeUrl(u); b.folderId = folderId; b.icon = pendingIcon || null; }
       toast("Bookmark updated");
     } else {
-      bookmarks.push({ id: uid(), title: t || hostOf(u), url: normalizeUrl(u), visits: 0, subpages: [], folderId: folderId });
+      bookmarks.push({ id: uid(), title: t || hostOf(u), url: normalizeUrl(u), visits: 0, subpages: [], folderId: folderId, icon: pendingIcon || null });
       toast("Bookmark added");
     }
     save(); render(); closeBookmarkModal();
@@ -843,6 +909,7 @@
           title: String(b.title || ""),
           url: normalizeUrl(b.url || ""),
           visits: Number(b.visits) || 0,
+          icon: typeof b.icon === "string" ? b.icon : null,
           folderId: folderIds.has(b.folderId) ? b.folderId : null,
           subpages: Array.isArray(b.subpages) ? b.subpages.map(s => ({
             id: s.id || uid(), title: String(s.title || ""), url: normalizeUrl(s.url || ""), visits: Number(s.visits) || 0
