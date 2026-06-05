@@ -405,11 +405,12 @@
   }
   function faviconSources(u) {
     const h = hostOf(u);
-    return [
-      "https://" + h + "/favicon.ico",
-      "https://icons.duckduckgo.com/ip3/" + encodeURIComponent(h) + ".ico",
-      "https://www.google.com/s2/favicons?sz=128&domain=" + encodeURIComponent(h)
-    ];
+    // Only use the site's OWN favicon (first-party, reliable). Third-party icon
+    // proxies (Google/DuckDuckGo) are skipped because some networks return blank
+    // placeholder images for them, which would show as empty chips.
+    const list = ["https://" + h + "/favicon.ico"];
+    if (!/^www\./.test(h)) list.push("https://www." + h + "/favicon.ico");
+    return list;
   }
   const COLORS = ["#5b6cff","#ff6b6b","#23a6d5","#22b07d","#f4a52b","#9b6bff","#e0518a","#0fb5ba","#7a8aff","#ff8a3d"];
   function colorFor(str) {
