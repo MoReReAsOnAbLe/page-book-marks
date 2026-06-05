@@ -112,11 +112,12 @@
     cursor: pointer; text-decoration: none; color: inherit;
   }
   .favicon {
-    width: 42px; height: 42px; border-radius: 11px; flex: none;
-    display: grid; place-items: center; font-weight: 700; font-size: 18px; color: #fff;
+    position: relative; width: 42px; height: 42px; border-radius: 11px; flex: none;
+    font-weight: 700; font-size: 18px; color: #fff;
     overflow: hidden; box-shadow: inset 0 0 0 1px rgba(0,0,0,.04);
   }
-  .favicon img { width: 100%; height: 100%; object-fit: contain; }
+  .favicon .fav-letter { position: absolute; inset: 0; display: grid; place-items: center; }
+  .favicon img { position: absolute; inset: 0; width: 100%; height: 100%; object-fit: contain; }
   .favicon.has-img { background: #fff !important; box-shadow: inset 0 0 0 1px rgba(0,0,0,.08); }
   .favicon.has-img img { padding: 7px; }
   .card-info { min-width: 0; flex: 1; }
@@ -405,11 +406,12 @@
   }
   function faviconSources(u) {
     const h = hostOf(u);
-    // Only use the site's OWN favicon (first-party, reliable). Third-party icon
-    // proxies (Google/DuckDuckGo) are skipped because some networks return blank
-    // placeholder images for them, which would show as empty chips.
+    // Try the site's own favicon first (most reliable), then icon services as a
+    // fallback for sites that don't expose /favicon.ico at the root.
     const list = ["https://" + h + "/favicon.ico"];
     if (!/^www\./.test(h)) list.push("https://www." + h + "/favicon.ico");
+    list.push("https://icons.duckduckgo.com/ip3/" + encodeURIComponent(h) + ".ico");
+    list.push("https://www.google.com/s2/favicons?sz=128&domain=" + encodeURIComponent(h));
     return list;
   }
   const COLORS = ["#5b6cff","#ff6b6b","#23a6d5","#22b07d","#f4a52b","#9b6bff","#e0518a","#0fb5ba","#7a8aff","#ff8a3d"];
@@ -542,7 +544,10 @@
     fav.className = "favicon";
     fav.style.background = colorFor(b.title || b.url);
     const letter = (b.title || hostOf(b.url) || "?").trim().charAt(0).toUpperCase();
-    fav.textContent = letter;
+    const letterEl = document.createElement("span");
+    letterEl.className = "fav-letter";
+    letterEl.textContent = letter;
+    fav.appendChild(letterEl);
     const img = document.createElement("img");
     img.alt = "";
     img.referrerPolicy = "no-referrer";
@@ -551,15 +556,16 @@
     let si = 0;
     img.onload = () => {
       // reject blank / placeholder responses (e.g. a 1×1 transparent pixel) so we don't
-      // end up with an empty white chip — keep falling back, then the colored letter tile
+      // end up with an empty chip — keep falling back, then show the colored letter tile
       if (img.naturalWidth >= 16 || (b.icon && img.naturalWidth > 0)) {
-        fav.textContent = ""; fav.classList.add("has-img");
+        letterEl.style.display = "none"; // hide the letter, but KEEP the loaded image
+        fav.classList.add("has-img");
       } else img.onerror();
     };
     img.onerror = () => {
       si += 1;
       if (si < sources.length) img.src = sources[si];
-      else { img.remove(); fav.classList.remove("has-img"); } // keep the letter tile
+      else { img.remove(); fav.classList.remove("has-img"); letterEl.style.display = ""; } // keep the letter tile
     };
     img.src = sources[0];
     fav.appendChild(img);
